@@ -143,6 +143,17 @@ lwiperf_list_find(lwiperf_state_base_t *item)
   return NULL;
 }
 
+#if LWIP_UDP
+/* Minimal view for UDP sessions used by generic abort path. */
+typedef struct _lwiperf_state_udp_abort {
+  lwiperf_state_base_t base;
+  struct udp_pcb *pcb;
+} lwiperf_state_udp_abort_t;
+#if LWIP_TIMERS
+static void lwiperf_udp_client_timeout(void *arg);
+#endif
+#endif
+
 /* ===== TCP iPerf implementation ===== */
 #if LWIP_TCP && LWIP_CALLBACK_API
 
@@ -845,6 +856,18 @@ lwiperf_abort(void *lwiperf_session)
       } else {
         lwiperf_all_connections = i;
       }
+#if LWIP_UDP
+      if (dealloc->tcp == 0) {
+        lwiperf_state_udp_abort_t *udp_conn = (lwiperf_state_udp_abort_t *)dealloc;
+#if LWIP_TIMERS
+        sys_untimeout(lwiperf_udp_client_timeout, udp_conn);
+#endif
+        if (udp_conn->pcb != NULL) {
+          udp_remove(udp_conn->pcb);
+          udp_conn->pcb = NULL;
+        }
+      }
+#endif
       LWIPERF_FREE(lwiperf_state_base_t, dealloc);
     } else {
       last = i;
@@ -1336,11 +1359,12 @@ lwiperf_udp_client_poll_impl(lwiperf_state_udp_t *conn, u32_t now)
   return 1;
 }
 
-#if LWIPERF_UDP_CLIENT_USE_TIMEOUT
 /** Timeout callback to drive UDP client pacing from lwIP timer context. */
+#if LWIP_TIMERS
 static void
 lwiperf_udp_client_timeout(void *arg)
 {
+#if LWIPERF_UDP_CLIENT_USE_TIMEOUT
   lwiperf_state_udp_t *conn = (lwiperf_state_udp_t *)arg;
 
   if ((conn == NULL) || (lwiperf_list_find(&conn->base) == NULL)) {
@@ -1349,6 +1373,9 @@ lwiperf_udp_client_timeout(void *arg)
   if (lwiperf_udp_client_poll_impl(conn, sys_now())) {
     sys_timeout(LWIPERF_UDP_CLIENT_POLL_INTERVAL_MS, lwiperf_udp_client_timeout, conn);
   }
+#else
+  LWIP_UNUSED_ARG(arg);
+#endif
 }
 #endif
 
